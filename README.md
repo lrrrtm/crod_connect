@@ -1,8 +1,8 @@
 <h1 align="center">CROD Connect</h1>
 
 <div align="center">
-  <img src="https://github.com/lrrrtm/crod_connect_flet/blob/main/repo_files/logo2.png" style="width: 35%; height: 35%;">
-  <img src="https://github.com/lrrrtm/crod_connect_flet/blob/main/repo_files/crod_logo.png" style="width: 35%; height: 35%;">
+  <img src="https://github.com/lrrrtm/crod_connect_flet/blob/master/repo_files/logo2.png" style="width: 35%; height: 35%;">
+  <img src="https://github.com/lrrrtm/crod_connect_flet/blob/master/repo_files/crod_logo.png" style="width: 35%; height: 35%;">
 </div>
 
 
