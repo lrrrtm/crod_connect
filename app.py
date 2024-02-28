@@ -453,7 +453,7 @@ def main(page: ft.Page):
                 child['firstname'],
                 datetime.datetime.strptime(child['birth'], '%Y-%m-%d').strftime('%d.%m.%Y'),
                 child['comment'],
-                " ".join([child['parent_lastname'], child['parent_firstname'], child['parent_middlename']]),
+                child['parent_lastname'],
                 child['parent_phone'],
             ])
         doc = docx.Document("assets/qr_template.docx")
@@ -520,6 +520,7 @@ def main(page: ft.Page):
 
     def update_grouplist(e: ft.ControlEvent):
         open_loading_dialog()
+        print("OK3")
         try:
             cur.execute(
                 f"SELECT * FROM children WHERE group_num = '{e.control.value}'")
@@ -547,7 +548,7 @@ def main(page: ft.Page):
                           "comment": data[a]['comment'],
                           "group_num": data[a]['group_num'],
                           "pass_phrase": data[a]['pass_phrase'],
-                          "parent": " ".join([data[a]['parent_lastname'], data[a]['parent_firstname'], data[a]['parent_middlename']]),
+                          "parent": data[a]['parent_lastname'],
                           "parent_phone": f"+{data[a]['parent_phone']}"
                           }
                 )
@@ -707,7 +708,7 @@ def main(page: ft.Page):
         for file_path in file_paths:
             print(file_path)
             with open(file_path, "rb") as file:
-                files = {'document': (file_path, file)}
+                files = {'document': file}
                 data = {'chat_id': tID}
                 response = requests.post(url=url, data=data, files=files)
                 if response.status_code != 200:
@@ -757,15 +758,15 @@ def main(page: ft.Page):
                             f"VALUES ('{mentor[0]}', '{mentor[1]}', '{int(mentor[2])}', 'mentors', '{pass_phrase}', '{login}')")
             elif destination == "children":
                 child = []
-                for col in range(5):
+                for col in range(7):
                     child.append(ws.cell_value(row, col))
                 # print(child)
                 pass_phrase = create_pass_phrase(child[0], child[1])
                 birth = xlrd.xldate.xldate_as_tuple(child[3], 0)
                 birth = f"{birth[0]}-{birth[1]}-{birth[2]}"
                 cur.execute(
-                    f"INSERT INTO children (firstname, lastname, group_num, status, pass_phrase, birth, comment) "
-                    f"VALUES ('{child[1]}', '{child[0]}', '{int(child[2])}', 'children', '{pass_phrase}', '{birth}', '{child[4]}')")
+                    f"INSERT INTO children (firstname, lastname, group_num, status, pass_phrase, birth, comment, parent_lastname, parent_phone) "
+                    f"VALUES ('{child[1]}', '{child[0]}', '{int(child[2])}', 'children', '{pass_phrase}', '{birth}', '{child[4]}', '{child[5]}', '{child[6]}')")
 
             connection.commit()
             row += 1
@@ -775,6 +776,7 @@ def main(page: ft.Page):
         hf.medium_impact()
         open_loading_dialog("Обновляем данные")
         try:
+            print("OK1")
             cur_index = e.control.selected_index
             # main_appbar.title.value = config_data['tabs_names'][tab_indexes[cur_index]]
             main_appbar.actions.clear()
@@ -782,6 +784,7 @@ def main(page: ft.Page):
             update_tables_dates()
             col_groups.controls.clear()
             if cur_index == 0:  # группы
+                print("OK2")
                 update_grouplist(group_dropdown.value)
                 group_dropdown.visible = True
                 col_groups.visible = True
