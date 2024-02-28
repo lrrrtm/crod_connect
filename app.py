@@ -6,15 +6,24 @@ import os
 import re
 import subprocess
 import time
+import math
 
+import docx
 import flet as ft
 import psutil
 import psycopg2 as pg
 import qrcode
 import requests
 import xlrd
+from docx2pdf import convert as pdf_convert
 from psycopg2 import extras
 from transliterate import translit
+from docx.shared import Inches, Pt
+from docx.enum.text import WD_PARAGRAPH_ALIGNMENT, WD_BREAK
+from docx.oxml import OxmlElement
+from docx.enum.table import WD_ALIGN_VERTICAL
+from docxtpl import DocxTemplate
+#from pypdf import PdfMerger
 
 script_path = os.path.abspath(__file__)
 script_directory = os.path.dirname(script_path)
@@ -360,6 +369,8 @@ def main(page: ft.Page):
         child_birth.value = data['birth']
         child_comment.value = data['comment']
         child_group_dropdown.value = data['group_num']
+        child_parent.value = data['parent']
+        child_parent_phone.value = data['parent_phone']
 
         col_edit_child.controls.pop()
         button_save_child.data = data['pass_phrase']
@@ -412,6 +423,101 @@ def main(page: ft.Page):
         )
         change_screens('edit_mentor')
 
+    def insert_metrics(filename, group_num):
+        doc = DocxTemplate(filename)
+        context = {"group_num": group_num,
+                   "create_time": datetime.datetime.now().strftime("%d.%m.%Y в %H:%M"),
+                   }
+        doc.render(context)
+        doc.save(filename)
+
+    def generate_grouplist(e):
+        open_loading_dialog("Генерируем документы")
+        group_num = int(e.control.value)
+        qr_filename_docx = f"{project_folder}/files/grouplists/Группа №{group_num} (QR-коды).docx"
+        list_filename_docx = f"{project_folder}/files/grouplists/Группа №{group_num} (Список).docx"
+
+        cur.execute(f"SELECT * FROM children WHERE group_num = '{group_num}'")
+        data = cur.fetchall()
+
+        arr_passphrases = []
+        arr_child_info = []
+
+        for child in data:
+            qr_img = qrcode.make(f"https://t.me/crod_connect_bot?start=children_{child['pass_phrase']}")
+            qr_img.save(f"assets/qrc/{child['pass_phrase']}.png")
+            arr_passphrases.append(
+                {'firstname': child['firstname'], 'lastname': child['lastname'], 'phrase': child['pass_phrase']})
+            arr_child_info.append([
+                child['lastname'],
+                child['firstname'],
+                datetime.datetime.strptime(child['birth'], '%Y-%m-%d').strftime('%d.%m.%Y'),
+                child['comment'],
+                " ".join([child['parent_lastname'], child['parent_firstname'], child['parent_middlename']]),
+                child['parent_phone'],
+            ])
+        doc = docx.Document("assets/qr_template.docx")
+        children_count = len(data)
+        rows, cols = math.ceil(children_count / 4), 4
+        table_qrc = doc.add_table(rows, cols)
+
+        sections = doc.sections
+        for section in sections:
+            section.left_margin = Inches(0.5)
+            section.right_margin = Inches(0.5)
+            section.top_margin = Inches(0.5)
+            section.bottom_margin = Inches(0.5)
+
+        index = 0
+        for row in range(rows):
+            for col in range(cols):
+                if index + 1 <= len(arr_passphrases):
+                    cell = table_qrc.cell(row, col)
+                    cell.paragraphs[0].alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+                    paragraph = cell.paragraphs[0]
+                    paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+                    paragraph.add_run().add_text(
+                        f"{arr_passphrases[index]['firstname']} {arr_passphrases[index]['lastname']}")
+                    paragraph.runs[-1].font.size = Pt(11)
+
+                    image_path = f"assets/qrc/{arr_passphrases[index]['phrase']}.png"
+                    paragraph.add_run().add_picture(image_path, width=Inches(1.7))
+                    index += 1
+
+        doc.save(qr_filename_docx)
+        insert_metrics(qr_filename_docx, group_num)
+
+        doc = docx.Document("assets/grouplist_template.docx")
+        table = doc.tables[0]
+        for i in range(children_count):
+            row = table.add_row()
+
+            for j, value in enumerate(arr_child_info[i]):
+                cell = row.cells[j]
+                cell.text = str(value)
+                if j != 3:  # не выравнивается ячейка с особенностями
+                    cell.paragraphs[0].alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+                    cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+
+        doc.save(list_filename_docx)
+        cur.execute(f"SELECT tid, pass_phrase FROM admins WHERE login = '{login_field.value}'")
+        data = cur.fetchall()[0]['tid']
+        insert_metrics(list_filename_docx, group_num)
+
+        send_document([list_filename_docx, qr_filename_docx], data)
+        close_dialog('e')
+        open_classic_snackbar("Файлы отправлены в Telegram", ft.colors.GREEN)
+
+    def open_group_picker():
+        # Открытие диалога выбора группы для создания списков
+
+        dialog_group_picker.content.controls[1].content = ft.Column(height=450)
+        for a in range(1, config_data['group_count'] + 1):
+            dialog_group_picker.content.controls[1].content.controls.append(ft.Radio(value=str(a), label=f"Группа № {a}"))
+        page.dialog = dialog_group_picker
+        dialog_group_picker.open = True
+        page.update()
+
     def update_grouplist(e: ft.ControlEvent):
         open_loading_dialog()
         try:
@@ -440,7 +546,9 @@ def main(page: ft.Page):
                           "birth": data[a]['birth'],
                           "comment": data[a]['comment'],
                           "group_num": data[a]['group_num'],
-                          "pass_phrase": data[a]['pass_phrase']
+                          "pass_phrase": data[a]['pass_phrase'],
+                          "parent": " ".join([data[a]['parent_lastname'], data[a]['parent_firstname'], data[a]['parent_middlename']]),
+                          "parent_phone": f"+{data[a]['parent_phone']}"
                           }
                 )
             )
@@ -509,7 +617,7 @@ def main(page: ft.Page):
         if tables_picker.result is not None and tables_picker.result.files is not None:
             for f in tables_picker.result.files:
                 if True:
-                # if f.name.split(".")[0] in ['modules_info', 'mentors_info', 'children_info']:
+                    # if f.name.split(".")[0] in ['modules_info', 'mentors_info', 'children_info']:
                     upload_list.append(
                         ft.FilePickerUploadFile(
                             f.name,
@@ -602,9 +710,7 @@ def main(page: ft.Page):
                 files = {'document': (file_path, file)}
                 data = {'chat_id': tID}
                 response = requests.post(url=url, data=data, files=files)
-                if response.status_code == 200:
-                    open_classic_snackbar(f"Документы отправлены")
-                else:
+                if response.status_code != 200:
                     open_classic_snackbar(f"Произошла ошибка при отправке документов: {response.text}",
                                           ft.colors.RED_ACCENT_200)
 
@@ -780,6 +886,12 @@ def main(page: ft.Page):
                                               style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder()),
                                               col={"md": 4},
                                               on_click=lambda _: send_table_example(login_field.value),
+                                              ),
+                            ft.ElevatedButton("Списки групп и QR", width=250,
+                                              height=50,
+                                              style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder()),
+                                              col={"md": 4},
+                                              on_click=lambda _: open_group_picker(),
                                               ),
                             ft.Divider(thickness=1),
                             ft.Container(ft.Text(value="Обновления таблиц", size=18, ),
@@ -1237,10 +1349,16 @@ def main(page: ft.Page):
                                on_change=lambda _: validate_child_info())
     child_comment = ft.TextField(label="Особенности", width=350, col={"md": 4}, read_only=True,
                                  multiline=True)
+    child_parent = ft.TextField(label="Имя", height=70, width=350, col={"md": 4},
+                                read_only=True)
+    child_parent_phone = ft.TextField(label="Телефон", height=70, width=250, col={"md": 4},
+                                      read_only=True)
+
+
 
     col_edit_child = ft.Column(
         controls=[
-            ft.Container(ft.Text(value="Персональная информация", size=18, ), margin=ft.margin.only(bottom=15)),
+            ft.Container(ft.Text(value="Данные о ребёнке", size=18, ), margin=ft.margin.only(bottom=15)),
             ft.ResponsiveRow(
                 controls=[
                     child_lastname,
@@ -1249,7 +1367,14 @@ def main(page: ft.Page):
                     child_comment,
                 ],
             ),
-            # ft.Divider(thickness=1),
+            ft.Divider(thickness=1),
+            ft.Container(ft.Text(value="Данные о родителе", size=18, ), margin=ft.margin.only(bottom=15)),
+            ft.ResponsiveRow(
+                controls=[
+                    child_parent,
+                    child_parent_phone,
+                ],
+            ),
             child_group_dropdown,
             ft.Divider(thickness=1),
             ft.Text(value="Действия", size=18),
@@ -1327,6 +1452,18 @@ def main(page: ft.Page):
     )
 
     # ------------------ДИАЛОГИ------------------
+    dialog_group_picker = ft.AlertDialog(
+        # Диалог выбора группы для создания списков
+        title=ft.Text("Выбор группы"),
+        content=ft.Column(
+            height=200,
+            controls=[
+                ft.Text("Выберите, для какой группы необходимо создать списки", size=16),
+                ft.RadioGroup(on_change=generate_grouplist)
+            ]
+        )
+    )
+
     dialog_loading = ft.AlertDialog(
         # Диалог с кольцом загрузки
         title=ft.Text(""),
